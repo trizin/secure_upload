@@ -1,0 +1,14 @@
+[Unit]
+Description=supload expiry sweep (backstop for the in-process sweeper)
+
+[Service]
+Type=oneshot
+User=supload
+Group=supload
+WorkingDirectory=/srv/supload
+Environment=SUPLOAD_DATA=/srv/supload/data
+ExecStart=/srv/supload/.venv/bin/python -m app.sweeper
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/supload/data

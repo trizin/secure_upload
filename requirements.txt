@@ -1,0 +1,6 @@
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+cryptography==50.0.1
+Pillow==12.3.0
+pikepdf==10.13.0.post1

@@ -1,0 +1,13 @@
+# Virtualenv and test scratch
+.venv/
+.pytest-tmp/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Runtime data: uploaded blobs, the SQLite store, and the server secret used
+# to hash client IPs. None of this belongs in version control.
+data/
+
+# Raw pixel buffers the JS/Python test harnesses shuttle between each other
+*.raw

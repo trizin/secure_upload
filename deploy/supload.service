@@ -1,0 +1,50 @@
+[Unit]
+Description=supload - metadata-stripping file drop
+After=network.target
+
+[Service]
+Type=exec
+User=supload
+Group=supload
+WorkingDirectory=/srv/supload
+Environment=SUPLOAD_DATA=/srv/supload/data
+Environment=SUPLOAD_APP_HOST=supload.org
+Environment=SUPLOAD_FILE_HOST=files.supload.org
+Environment=SUPLOAD_SCHEME=https
+Environment=SUPLOAD_ENFORCE_HOSTS=1
+Environment=SUPLOAD_SANITIZE_MEM=500000000
+ExecStart=/srv/supload/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --no-access-log
+Restart=on-failure
+RestartSec=2
+
+# This process parses hostile files for a living. Give it as little of the
+# system as it can run with.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=/srv/supload/data
+
+# Nothing here ever needs to reach the internet. This is the backstop for a
+# crafted media file that talks ffmpeg into opening a URL.
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# 967MB box: leave the OS room to breathe rather than inviting the OOM killer.
+MemoryMax=750M
+
+[Install]
+WantedBy=multi-user.target

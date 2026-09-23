@@ -1,0 +1,64 @@
+# supload reverse proxy.
+#
+# Two origins, one backend. The app enforces the split by Host header; this
+# just terminates TLS and keeps tokens out of the logs.
+
+{
+	email admin@supload.org
+}
+
+(hardened) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+
+	# The download token lives in the URL, which makes every access-log line a
+	# working credential. Rewrite it out before anything is written to disk.
+	log {
+		output file /var/log/caddy/supload.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "/(d|x|r)/[A-Za-z0-9_-]{20,}" "/${1}/REDACTED"
+				request>headers>Referer delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+			}
+		}
+	}
+}
+
+supload.org {
+	import hardened
+	encode zstd gzip
+
+	# Reject oversize uploads at the edge rather than spooling them to disk.
+	# Keep this a little above the app's own limit so the app produces the
+	# friendly error in the normal case.
+	request_body {
+		max_size 105MB
+	}
+
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+	}
+}
+
+files.supload.org {
+	import hardened
+
+	# No compression here: these are already-compressed blobs streamed
+	# straight through, and buffering them would cost memory we do not have.
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+	}
+}
+
+www.supload.org {
+	import hardened
+	redir https://supload.org{uri} permanent
+}
