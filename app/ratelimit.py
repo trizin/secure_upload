@@ -8,14 +8,41 @@ from __future__ import annotations
 
 import hmac
 import hashlib
+import ipaddress
 import time
 
 from . import config, db
 
-# Only loopback is trusted to have set X-Forwarded-For, because only the local
-# reverse proxy can reach the app. Caddy appends the peer it actually saw, so
-# the LAST entry is the real client and cannot be spoofed by prepending values.
-_TRUSTED_PEERS = {"127.0.0.1", "::1"}
+
+def _trusted_networks():
+    """Peers allowed to set X-Forwarded-For. Caddy appends the peer it actually
+    saw, so the LAST entry is the real client and cannot be spoofed by
+    prepending values - but only if the request genuinely came from Caddy,
+    which is what this checks."""
+    raw = config.TRUSTED_PROXIES.strip()
+    if raw == "*":
+        return "*"
+    networks = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def _is_trusted(peer: str) -> bool:
+    networks = _trusted_networks()
+    if networks == "*":
+        return True
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    return any(address in net for net in networks)
 
 
 class RateLimited(Exception):
@@ -24,7 +51,7 @@ class RateLimited(Exception):
 
 def client_ip(request) -> str:
     peer = request.client.host if request.client else "unknown"
-    if peer in _TRUSTED_PEERS:
+    if _is_trusted(peer):
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.split(",")[-1].strip()

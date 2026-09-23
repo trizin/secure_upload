@@ -1,0 +1,82 @@
+# supload, containerised.
+#
+#   cp .env.example .env   # set your hostnames
+#   docker compose up -d --build
+#
+# The app port is deliberately not published: it is reachable only from Caddy
+# over the internal network. Publishing it would expose an origin with no TLS
+# and no host enforcement in front of it.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      SUPLOAD_APP_HOST: ${SUPLOAD_APP_HOST:-supload.org}
+      SUPLOAD_FILE_HOST: ${SUPLOAD_FILE_HOST:-files.supload.org}
+      SUPLOAD_SCHEME: https
+      SUPLOAD_ENFORCE_HOSTS: "1"
+      # Caddy reaches the app from the bridge network, not loopback. Without
+      # this the app ignores X-Forwarded-For and every request is attributed
+      # to Caddy, quietly turning per-IP rate limits into one global bucket.
+      SUPLOAD_TRUSTED_PROXIES: 172.30.0.0/16
+      SUPLOAD_MAX_FILE_SIZE: ${SUPLOAD_MAX_FILE_SIZE:-104857600}
+      SUPLOAD_TOTAL_QUOTA: ${SUPLOAD_TOTAL_QUOTA:-21474836480}
+      SUPLOAD_RETENTION: ${SUPLOAD_RETENTION:-172800}
+      SUPLOAD_ABUSE_EMAIL: ${SUPLOAD_ABUSE_EMAIL:-abuse@supload.org}
+    volumes:
+      - supload-data:/srv/supload/data
+    networks:
+      - edge
+    # Nothing writes outside the data volume, so the rest of the filesystem
+    # can be read-only. Sanitiser temp files live under data/tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 700m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      SUPLOAD_APP_HOST: ${SUPLOAD_APP_HOST:-supload.org}
+      SUPLOAD_FILE_HOST: ${SUPLOAD_FILE_HOST:-files.supload.org}
+      SUPLOAD_ACME_EMAIL: ${SUPLOAD_ACME_EMAIL:-admin@supload.org}
+    volumes:
+      - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates - losing this re-issues them
+      - caddy-config:/config
+    networks:
+      - edge
+    depends_on:
+      - app
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  edge:
+    ipam:
+      config:
+        # Pinned so SUPLOAD_TRUSTED_PROXIES above can name it. If you change
+        # this subnet, change that variable to match or rate limiting breaks.
+        - subnet: 172.30.0.0/16
+
+volumes:
+  supload-data:
+  caddy-data:
+  caddy-config:

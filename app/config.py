@@ -30,6 +30,14 @@ RETENTION_SECONDS = _int("SUPLOAD_RETENTION", 48 * 3600)
 # route to the OOM killer, so pixels are capped independently of file size.
 MAX_IMAGE_PIXELS = _int("SUPLOAD_MAX_IMAGE_PIXELS", 50_000_000)
 
+# Which peers are allowed to set X-Forwarded-For. Behind systemd the proxy is
+# on loopback, but in a container it arrives from the bridge network, so this
+# has to be configurable - otherwise every request looks like it came from the
+# proxy and per-IP rate limiting silently becomes one global bucket.
+# Comma-separated IPs or CIDRs. "*" trusts any peer, which is only safe when
+# the app port is unreachable except through the proxy.
+TRUSTED_PROXIES = os.environ.get("SUPLOAD_TRUSTED_PROXIES", "127.0.0.1/32,::1/128")
+
 RATE_UPLOADS_PER_HOUR = _int("SUPLOAD_RATE_UPLOADS", 10)
 RATE_BYTES_PER_DAY = _int("SUPLOAD_RATE_BYTES", 500 * 1024 * 1024)
 

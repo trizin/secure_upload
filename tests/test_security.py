@@ -271,3 +271,40 @@ def test_watermark_page_offers_both_hidden_layers(client):
     assert "not survive cropping" in body, "must say the message dies on a crop"
     assert "cropping" in body and "downscaling" in body
     assert "rotation defeats it" in body, "must state the robust layer's limit too"
+
+
+def test_forwarded_for_is_only_trusted_from_a_configured_proxy(monkeypatch):
+    """Per-IP limits depend on knowing the real client. Behind a container the
+    proxy is not on loopback, so this is configurable - but it must still
+    refuse to believe X-Forwarded-For from an arbitrary peer, or anyone could
+    spoof their way past the rate limiter."""
+    from app import ratelimit
+
+    class FakeClient:
+        def __init__(self, host):
+            self.host = host
+
+    class FakeRequest:
+        def __init__(self, peer, forwarded=None):
+            self.client = FakeClient(peer)
+            self.headers = {"x-forwarded-for": forwarded} if forwarded else {}
+
+    # Default: loopback only.
+    monkeypatch.setattr(config, "TRUSTED_PROXIES", "127.0.0.1/32,::1/128")
+    assert ratelimit.client_ip(FakeRequest("127.0.0.1", "203.0.113.9")) == "203.0.113.9"
+    # An untrusted peer's claim is ignored; we use what we can actually see.
+    assert ratelimit.client_ip(FakeRequest("198.51.100.4", "203.0.113.9")) == "198.51.100.4"
+
+    # Container bridge network, as docker compose configures it.
+    monkeypatch.setattr(config, "TRUSTED_PROXIES", "172.30.0.0/16")
+    assert ratelimit.client_ip(FakeRequest("172.30.0.2", "203.0.113.9")) == "203.0.113.9"
+    assert ratelimit.client_ip(FakeRequest("10.1.2.3", "203.0.113.9")) == "10.1.2.3"
+
+    # The last hop is the real client: prepending values must not help.
+    monkeypatch.setattr(config, "TRUSTED_PROXIES", "127.0.0.1/32")
+    spoofed = FakeRequest("127.0.0.1", "1.1.1.1, 2.2.2.2, 203.0.113.9")
+    assert ratelimit.client_ip(spoofed) == "203.0.113.9"
+
+    # Garbage configuration must fail closed, not open.
+    monkeypatch.setattr(config, "TRUSTED_PROXIES", "not-an-address")
+    assert ratelimit.client_ip(FakeRequest("127.0.0.1", "203.0.113.9")) == "127.0.0.1"

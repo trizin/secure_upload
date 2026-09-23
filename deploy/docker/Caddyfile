@@ -1,0 +1,61 @@
+# Caddyfile for the container deployment.
+#
+# Kept separate from deploy/Caddyfile (the systemd one) because two things
+# genuinely differ: the upstream is a service name rather than loopback, and
+# logs go to stdout so `docker compose logs` works instead of a file nothing
+# rotates. Everything else - the two origins, the token redaction - matches.
+
+{
+	email {$SUPLOAD_ACME_EMAIL:admin@supload.org}
+}
+
+(hardened) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+
+	# The download token is in the URL, which makes an unredacted access log a
+	# list of working credentials. Rewrite it before anything is written.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "/(d|x|r)/[A-Za-z0-9_-]{20,}" "/${1}/REDACTED"
+				request>headers>Referer delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+			}
+		}
+	}
+}
+
+{$SUPLOAD_APP_HOST:supload.org} {
+	import hardened
+	encode zstd gzip
+
+	# Reject oversize uploads at the edge rather than spooling them to disk.
+	request_body {
+		max_size {$SUPLOAD_MAX_BODY:105MB}
+	}
+
+	reverse_proxy app:8000 {
+		flush_interval -1
+	}
+}
+
+{$SUPLOAD_FILE_HOST:files.supload.org} {
+	import hardened
+
+	# No compression: these are already-compressed blobs streamed straight
+	# through, and buffering them would cost memory.
+	reverse_proxy app:8000 {
+		flush_interval -1
+	}
+}
+
+www.{$SUPLOAD_APP_HOST:supload.org} {
+	import hardened
+	redir https://{$SUPLOAD_APP_HOST:supload.org}{uri} permanent
+}

@@ -204,6 +204,33 @@ It creates a `supload` service user, installs to `/srv/supload`, adds a 2 GB
 swapfile, installs Caddy with the two-origin config, the systemd unit and
 sweeper timer, and an nftables ruleset allowing only 22, 80 and 443.
 
+## Docker
+
+```bash
+cp .env.example .env     # set your two hostnames
+docker compose up -d --build
+```
+
+Two services: the app, and Caddy terminating TLS. The app's port is **not**
+published - it is reachable only from Caddy over the internal network, since
+publishing it would expose an origin with no TLS and no host enforcement in
+front of it. The app runs as a non-root user with a read-only root filesystem,
+all capabilities dropped and `no-new-privileges`; only the data volume and a
+small tmpfs are writable.
+
+One thing to keep straight: `SUPLOAD_TRUSTED_PROXIES` must match the compose
+subnet. Caddy reaches the app from the bridge network rather than loopback, so
+if the app does not recognise it as a proxy it ignores `X-Forwarded-For` and
+attributes every request to Caddy - which silently turns per-IP rate limiting
+into one global bucket. Change the subnet, change the variable.
+
+`caddy-data` holds the certificates; deleting that volume means re-issuing
+them, which Let's Encrypt rate-limits. `supload-data` holds the uploads, the
+SQLite store and the server secret.
+
+The container path and `deploy/install.sh` are alternatives, not layers - do
+not run both on one host, as they would fight over ports 80 and 443.
+
 ## Operating
 
 On the deployed host, run these from `/srv/supload` as the service user:
