@@ -194,6 +194,14 @@ device &mdash; this page is blocked from making network requests.</p>
           <input type="range" id="wmGap" min="12" max="45" value="22">
         </label>
         <label class="row"><input type="checkbox" id="wmDark"> Dark text</label>
+        <div class="row">
+          <button type="button" class="chip" data-tool="mark">Pick area</button>
+          <button type="button" id="wmMarkAll">Whole image</button>
+        </div>
+        <p class="meta" id="wmAreaOut">Covering the whole image.</p>
+        <p class="meta">Only the visible mark is confined to the area you pick.
+        The two hidden marks always cover the whole image &mdash; confining
+        them would just make them easier to crop away.</p>
       </section>
 
       <section>

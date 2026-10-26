@@ -308,3 +308,24 @@ def test_forwarded_for_is_only_trusted_from_a_configured_proxy(monkeypatch):
     # Garbage configuration must fail closed, not open.
     monkeypatch.setattr(config, "TRUSTED_PROXIES", "not-an-address")
     assert ratelimit.client_ip(FakeRequest("127.0.0.1", "203.0.113.9")) == "127.0.0.1"
+
+
+def test_visible_mark_can_be_confined_to_an_area(client):
+    """Tiling across the whole image is wrong when you only want a mark over
+    one part of it, so the visible mark takes an optional rectangle."""
+    import re
+
+    raw = client.get("/watermark").text
+    assert 'data-tool="mark"' in raw, "no way to pick an area"
+    assert 'id="wmMarkAll"' in raw, "no way to go back to the whole image"
+    assert 'id="wmAreaOut"' in raw, "no readout of the current area"
+
+    body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).lower()
+    # The hidden marks must stay full-coverage, and the page has to say so -
+    # confining them would only make them easier to crop away.
+    assert "only the visible mark is confined" in body
+    assert "hidden marks always cover the whole image" in body
+
+    js = client.get("/static/watermark.js").text
+    assert "markArea" in js
+    assert "c.clip()" in js, "the area must actually clip the drawing"

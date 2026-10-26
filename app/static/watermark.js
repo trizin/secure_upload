@@ -22,6 +22,7 @@
     preview: null,      // downscaled ImageData used while editing
     scale: 1,           // preview / source
     shapes: [],         // in SOURCE coordinates
+    markArea: null,     // visible mark confined to this rect, also SOURCE coords
     tool: "rect",
     drag: null,
     name: "image",
@@ -73,6 +74,8 @@
     state.preview = tctx.getImageData(0, 0, pw, ph);
 
     state.shapes = [];
+    state.markArea = null;
+    updateAreaLabel();
     $("wmdrop").hidden = true;
     $("wmstage").hidden = false;
     $("wminfo").textContent =
@@ -125,7 +128,7 @@
     });
   }
 
-  function drawVisibleMark(c, width, height) {
+  function drawVisibleMark(c, width, height, k) {
     if (!$("wmVisible").checked) return;
     var text = $("wmText").value.trim();
     if (!text) return;
@@ -136,6 +139,29 @@
     var dark = $("wmDark").checked;
 
     c.save();
+
+    /* Confining the mark is a clip, but the tiling is also re-centred on the
+     * area. Clipping a tiling centred on the whole image would, for a small
+     * box, show whatever fragment of a word happened to fall inside it. */
+    var centreX = width / 2, centreY = height / 2;
+    var reach = Math.hypot(width, height);
+    var area = state.markArea;
+    if (area) {
+      var ax0 = Math.max(0, Math.min(area.x0, area.x1) * k);
+      var ax1 = Math.min(width, Math.max(area.x0, area.x1) * k);
+      var ay0 = Math.max(0, Math.min(area.y0, area.y1) * k);
+      var ay1 = Math.min(height, Math.max(area.y0, area.y1) * k);
+      if (ax1 - ax0 < 2 || ay1 - ay0 < 2) { c.restore(); return; }
+      c.beginPath();
+      c.rect(ax0, ay0, ax1 - ax0, ay1 - ay0);
+      c.clip();
+      centreX = (ax0 + ax1) / 2;
+      centreY = (ay0 + ay1) / 2;
+      // Only cover the clipped box, not the whole canvas - otherwise a small
+      // area still costs thousands of invisible draw calls.
+      reach = Math.hypot(ax1 - ax0, ay1 - ay0);
+    }
+
     c.globalAlpha = +$("wmOpacity").value / 100;
     c.font = "600 " + size.toFixed(1) + "px ui-sans-serif, system-ui, sans-serif";
     c.textAlign = "center";
@@ -148,9 +174,8 @@
 
     var stepX = c.measureText(text).width * gap * 0.5 + size;
     var stepY = size * gap;
-    var reach = Math.hypot(width, height);
 
-    c.translate(width / 2, height / 2);
+    c.translate(centreX, centreY);
     c.rotate(angle);
     for (var y = -reach; y <= reach; y += stepY) {
       var offset = (Math.round(y / stepY) % 2) * stepX * 0.5;
@@ -180,7 +205,7 @@
     var c = out.getContext("2d", { willReadFrequently: true });
     c.putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
 
-    drawVisibleMark(c, image.width, image.height);
+    drawVisibleMark(c, image.width, image.height, k);
 
     // Both hidden layers go on at the end, over the finished picture -
     // anything applied afterwards would disturb them. The robust ID is added
@@ -229,15 +254,29 @@
   // While dragging, show the outline only - recomposing on every pointer
   // move would make a large image crawl.
   function drawOverlay() {
-    if (!state.drag) return;
     var c = canvas.getContext("2d");
+    var k = state.scale;
+
+    // The committed mark area stays outlined, so it is clear the visible mark
+    // is confined rather than mysteriously missing elsewhere.
+    if (state.markArea && !(state.drag && state.drag.tool === "mark")) {
+      var a = state.markArea;
+      c.save();
+      c.strokeStyle = "rgba(120,220,170,.9)";
+      c.lineWidth = 1.5;
+      c.setLineDash([2, 5]);
+      c.strokeRect(Math.min(a.x0, a.x1) * k, Math.min(a.y0, a.y1) * k,
+        Math.abs(a.x1 - a.x0) * k, Math.abs(a.y1 - a.y0) * k);
+      c.restore();
+    }
+
+    if (!state.drag) return;
     c.save();
     c.strokeStyle = "rgba(255,255,255,.95)";
     c.lineWidth = 1.5;
     c.setLineDash([5, 4]);
     var d = state.drag;
     if (d.type === "rect") {
-      var k = state.scale;
       c.strokeRect(Math.min(d.x0, d.x1) * k, Math.min(d.y0, d.y1) * k,
         Math.abs(d.x1 - d.x0) * k, Math.abs(d.y1 - d.y0) * k);
     }
@@ -261,8 +300,8 @@
     if (!state.preview) return;
     canvas.setPointerCapture(e.pointerId);
     var p = toImageCoords(e);
-    if (state.tool === "rect") {
-      state.drag = { type: "rect", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+    if (state.tool === "rect" || state.tool === "mark") {
+      state.drag = { type: "rect", tool: state.tool, x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     } else {
       state.drag = { type: "brush", last: null };
       brushAt(p);
@@ -298,7 +337,11 @@
     if (!state.drag) return;
     if (state.drag.type === "rect") {
       var d = state.drag;
-      if (Math.abs(d.x1 - d.x0) > 3 && Math.abs(d.y1 - d.y0) > 3) {
+      var bigEnough = Math.abs(d.x1 - d.x0) > 3 && Math.abs(d.y1 - d.y0) > 3;
+      if (bigEnough && d.tool === "mark") {
+        state.markArea = { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 };
+        updateAreaLabel();
+      } else if (bigEnough) {
         var look = currentLook();
         state.shapes.push({
           type: "rect", x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1,
@@ -386,6 +429,20 @@
   });
 
   // --- wiring --------------------------------------------------------------
+
+  function updateAreaLabel() {
+    var a = state.markArea;
+    $("wmAreaOut").textContent = a
+      ? "Visible mark confined to " + Math.round(Math.abs(a.x1 - a.x0)) + " x " +
+        Math.round(Math.abs(a.y1 - a.y0)) + " px."
+      : "Covering the whole image.";
+  }
+
+  $("wmMarkAll").addEventListener("click", function () {
+    state.markArea = null;
+    updateAreaLabel();
+    render();
+  });
 
   $("wmNewId").addEventListener("click", function () {
     $("wmRobustId").value = robust.randomId();
